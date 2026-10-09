@@ -52,7 +52,7 @@ jobs:
           [ "$code" = 200 ] || exit 1
           [ -n "$S1" ]   # mark the run failed if the main price could not be read
       - name: Keepalive (daily)
-        if: github.event_name == schedule && always()
+        if: github.event_name == 'schedule' && always()
         env:
           GH_TOKEN: ${{ github.token }}
         run: |

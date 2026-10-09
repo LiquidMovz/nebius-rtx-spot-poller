@@ -56,7 +56,7 @@ jobs:
         env:
           INGEST_KEY: ${{ secrets.INGEST_KEY }}
           WORKER_URL: ${{ secrets.WORKER_URL }}
-          SOURCE: ${{ github.event_name == schedule && github || github-manual }}
+          SOURCE: ${{ github.event_name == 'schedule' && 'github' || 'github-manual' }}
         run: |
           git clone -q --depth 1 "https://github.com/${{ github.repository }}" repo
           node repo/scripts/poll-multi.mjs --source "$SOURCE" --ingest "$WORKER_URL/ingest2"

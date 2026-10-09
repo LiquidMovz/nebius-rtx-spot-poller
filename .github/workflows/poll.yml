@@ -1,0 +1,61 @@
+name: poll
+on:
+  schedule:
+    - cron: "2,17,32,47 * * * *"   # UTC; minutes-only so :02/:17/:32/:47 in Phoenix too (GitHub may start runs a few minutes late)
+  workflow_dispatch:
+permissions:
+  actions: write   # only used by the daily keepalive step (re-enable this workflow so the 60-day inactivity rule never pauses it)
+concurrency:
+  group: poll
+  cancel-in-progress: false
+jobs:
+  poll:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Fetch prices and ingest
+        env:
+          PARENT: ${{ secrets.NEBIUS_PARENT }}
+          INGEST_KEY: ${{ secrets.INGEST_KEY }}
+          WORKER_URL: ${{ secrets.WORKER_URL }}
+          SOURCE: ${{ github.event_name == schedule && github || github-manual }}
+        run: |
+          set -uo pipefail
+          URL=https://api.nebius.cloud/billing/v1alpha1/calculators/estimate
+          ERRS=()
+          est() {  # est <preset> <spot|ondemand> -> echoes price or empty; appends error text on failure
+            local preset="$1" mode="$2" spec body code out attempt
+            spec=$(jq -nc --arg pr "$preset" "{resources:{platform:\"gpu-rtx6000\",preset:\$pr}}")
+            [ "$mode" = spot ] && spec=$(jq -c ". + {preemptible:{onPreemption:\"STOP\"},followsSpotPrice:{}}" <<<"$spec")
+            body=$(jq -nc --arg p "$PARENT" --argjson s "$spec" "{resourceSpec:{computeInstanceSpec:{metadata:{parentId:\$p},spec:\$s}}}")
+            for attempt in 1 2; do
+              code=$(curl -sS -m 30 -o resp.json -w "%{http_code}" -H "content-type: application/json" -d "$body" "$URL" 2>curl.err) || code="curl:$(tr "\n" " " <curl.err | cut -c1-150)"
+              out=$(jq -r ".hourlyCost.general.total.cost // empty" resp.json 2>/dev/null || true)
+              if [ "$code" = 200 ] && [ -n "$out" ]; then echo "$out"; return 0; fi
+              sleep 10
+            done
+            echo "${mode}_${preset}: HTTP ${code} $(tr "\n" " " <resp.json 2>/dev/null | cut -c1-200)" >> errs.txt
+            return 1
+          }
+          : > errs.txt
+          TS=$(date +%s)
+          S1=$(est 1gpu-24vcpu-218gb spot || true)
+          S8=$(est 8gpu-192vcpu-1744gb spot || true)
+          OD=$(est 1gpu-24vcpu-218gb ondemand || true)
+          ERR=$(paste -sd "|" errs.txt | sed "s/|/ | /g")
+          echo "spot_1gpu=${S1:-none} spot_8gpu=${S8:-none} ondemand_1gpu=${OD:-none}"
+          [ -n "$ERR" ] && echo "errors: $ERR"
+          payload=$(jq -nc --argjson ts "$TS" --arg s1 "$S1" --arg s8 "$S8" --arg od "$OD" --arg e "$ERR" --arg src "$SOURCE" \
+            "{ts:\$ts, spot_1gpu:(\$s1|if .==\"\" then null else tonumber end), spot_8gpu:(\$s8|if .==\"\" then null else tonumber end), ondemand_1gpu:(\$od|if .==\"\" then null else tonumber end), error:(if \$e==\"\" then null else \$e end), source:\$src}")
+          code=$(curl -sS -m 30 -o ingest.out -w "%{http_code}" -X POST -H "authorization: Bearer $INGEST_KEY" -H "content-type: application/json" -d "$payload" "$WORKER_URL/ingest")
+          echo "ingest HTTP $code"
+          [ "$code" = 200 ] || exit 1
+          [ -n "$S1" ]   # mark the run failed if the main price could not be read
+      - name: Keepalive (daily)
+        if: github.event_name == schedule && always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ "$(date -u +%H)" = "12" ] && [ "$(date -u +%M)" -lt 15 ]; then
+            gh api -X PUT "repos/${{ github.repository }}/actions/workflows/poll.yml/enable" && echo "keepalive ok"
+          else echo "skip"; fi

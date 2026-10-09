@@ -18,7 +18,7 @@ jobs:
           PARENT: ${{ secrets.NEBIUS_PARENT }}
           INGEST_KEY: ${{ secrets.INGEST_KEY }}
           WORKER_URL: ${{ secrets.WORKER_URL }}
-          SOURCE: ${{ github.event_name == schedule && github || github-manual }}
+          SOURCE: ${{ github.event_name == 'schedule' && 'github' || 'github-manual' }}
         run: |
           set -uo pipefail
           URL=https://api.nebius.cloud/billing/v1alpha1/calculators/estimate

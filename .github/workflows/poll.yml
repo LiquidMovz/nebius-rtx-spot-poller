@@ -1,7 +1,7 @@
 name: poll
 on:
   schedule:
-    - cron: "2,17,32,47 * * * *"   # UTC; minutes-only so :02/:17/:32/:47 in Phoenix too (GitHub may start runs a few minutes late)
+    - cron: "2,17,32,47 * * * *"   # UTC minutes = Phoenix minutes; GitHub may start scheduled runs late or skip under load
   workflow_dispatch:
 permissions:
   actions: write   # only used by the daily keepalive step (re-enable this workflow so the 60-day inactivity rule never pauses it)

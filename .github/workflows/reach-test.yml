@@ -1,0 +1,16 @@
+name: reach-test
+on: workflow_dispatch
+permissions: {}
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Fetch RTX spot price
+        env:
+          PARENT: ${{ secrets.NEBIUS_PARENT }}
+        run: |
+          body=$(jq -nc --arg p "$PARENT" "{resourceSpec:{computeInstanceSpec:{metadata:{parentId:\$p},spec:{resources:{platform:\"gpu-rtx6000\",preset:\"1gpu-24vcpu-218gb\"},preemptible:{onPreemption:\"STOP\"},followsSpotPrice:{}}}}}")
+          code=$(curl -sS -m 30 -o out.json -w "%{http_code}" -H "content-type: application/json" -d "$body" https://api.nebius.cloud/billing/v1alpha1/calculators/estimate) || true
+          echo "HTTP $code"
+          echo "price: $(jq -r ".hourlyCost.general.total.cost // \"none\"" out.json 2>/dev/null)"
